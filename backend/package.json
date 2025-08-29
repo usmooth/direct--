@@ -1,0 +1,22 @@
+{
+  "name": "direct--backend",
+  "version": "1.0.0",
+  "description": "Backend logic for direct--",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usmooth/direct--.git"
+  },
+  "keywords": [
+    "feedback"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/usmooth/direct--/issues"
+  },
+  "homepage": "https://github.com/usmooth/direct--#readme"
+}
