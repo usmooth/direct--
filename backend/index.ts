@@ -2,6 +2,9 @@ import { db } from './firebase-init'; // Import our Firestore database connectio
 import { User } from "./model/user.model";
 import { Notification } from "./model/notification.model";
 import sha256 from "sha256";
+import express, { Request, Response } from "express";
+const app = express();
+app.use(express.json());
 
 // The in-memory arrays are no longer needed, as Firestore is now our database.
 // export let mutableListeningRecords: ListeningRecord[] = [];
@@ -125,9 +128,28 @@ async function cleanupRecords(feedbackHash: string): Promise<void> {
 	const creditDataToDeleteQuery = await db.collection('listeningAndCreditData').where('listening', '==', feedbackHash).get();
 
 	// Add each found document to the batch delete list.
-	recordsToDeleteQuery.forEach(doc => batch.delete(doc.ref));
-	creditDataToDeleteQuery.forEach(doc => batch.delete(doc.ref));
+	recordsToDeleteQuery.forEach((doc: any)=> batch.delete(doc.ref));
+	creditDataToDeleteQuery.forEach((doc: any)=> batch.delete(doc.ref));
 
 	// Commit the batch to execute the deletions.
 	await batch.commit();
 }
+
+app.post("/register-request", (req: Request, res: Response) => {
+  res.status(200).json({ message: "/register-request works" });
+});
+
+app.post("/register", (req: Request, res: Response) => {
+  res.status(200).json({ message: "/register works" });
+});
+
+app.post("/send-feedback", (req: Request, res: Response) => {
+  res.status(200).json({ message: "/send-feedback works" });
+});
+
+app.get("/get-notifications", (req: Request, res: Response) => {
+  res.status(200).json({ message: "/get-notifications works" });
+});
+
+const PORT = 3000;
+app.listen(PORT, () => console.log(`Server runs on:${PORT}`));
