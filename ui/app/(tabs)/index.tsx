@@ -16,12 +16,37 @@ export default function Index() {
   const [progress, setProgress] = useState(0);
   const intervalRef = useRef<number | null>(null);
 
+  const sendApprovalRequest = async () => {
+    // Prevent sending request if person is not set
+    if (!person.trim()) {
+      Alert.alert("Input required", "Please type something before approving.");
+      return;
+    }
+
+    try {
+      // TODO: Replace with your actual backend endpoint and request details
+      const response = await fetch("localhost:3000/send-feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: person }),
+      });
+
+      const responseData = await response.json();
+      Alert.alert("Success!", `Approved for: ${person}`);
+    } catch (error) {
+      console.error("Failed to send approval request:", error);
+      Alert.alert("Error", "Could not complete the approval request.");
+    }
+  };
+
   const handlePressIn = () => {
     intervalRef.current = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 1) {
           clearInterval(intervalRef.current!);
-          Alert.alert("Success!", `Approved for: ${person}`);
+          sendApprovalRequest();
           return 1;
         }
         return prev + 0.01; // 10ms * 500 steps = 5000ms = 5s
@@ -43,7 +68,7 @@ export default function Index() {
           title: "Home",
           headerShown: true,
           headerRight: () => (
-            <Link href="/notification" style={{ padding: 10 }}>
+            <Link href="/register" style={{ padding: 10 }}>
               <Text style={{ fontSize: 24 }}>🔔</Text>
             </Link>
           ),
