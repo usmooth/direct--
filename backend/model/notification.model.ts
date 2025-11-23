@@ -1,6 +1,13 @@
+/**
+ * Notification model representing a user notification
+ */
 export interface Notification {
-  to: string; // The user hash to be notified
-  context: string; // The feedbackHash of the another user 
-  notificationTime: Date; // Timestamp of the notification
-  skt: Date; // Expiry date of the notification
+  /** The user hash (phone number hash) of the user to be notified */
+  to: string;
+  /** The feedback hash (userHash) of the other user involved in mutual feedback */
+  context: string;
+  /** Timestamp when the notification was created */
+  notificationTime: Date;
+  /** Expiry date of the notification (skt = son kullanma tarihi / expiry date) */
+  skt: Date;
 }

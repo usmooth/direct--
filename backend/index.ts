@@ -1,12 +1,20 @@
-import { db } from './firebase-init'; // Import our Firestore database connection.
+import { db } from './firebase-init';
 import { User } from "./model/user.model";
 import { Notification } from "./model/notification.model";
 import sha256 from "sha256";
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import * as admin from 'firebase-admin';
 import jwt from 'jsonwebtoken';
+import cors from 'cors';
+
 const app = express();
 app.use(express.json());
+app.use(cors()); // Enable CORS for all routes (will be configured for specific origins in production)
+
+// Extended Request interface for authenticated routes
+interface AuthenticatedRequest extends Request {
+	userHash?: string;
+}
 
 // The in-memory arrays are no longer needed, as Firestore is now our database.
 // export let mutableListeningRecords: ListeningRecord[] = [];
@@ -16,6 +24,11 @@ interface FeedbackResponse {
 	success: boolean;
 	message: string;
 }
+/**
+ * Generates a random numeric verification code
+ * @param length - Length of the verification code (default: 6)
+ * @returns Random numeric string of specified length
+ */
 function generateVerificationCode(length: number = 6): string {
     const digits = '0123456789';
     let code = '';
@@ -28,42 +41,106 @@ function generateVerificationCode(length: number = 6): string {
 // --- JWT Configuration ---
 // IMPORTANT: Store your secret in environment variables in production!
 const JWT_SECRET = process.env.JWT_SECRET || 'DEFAULT_DEVELOPMENT_SECRET_KEY_12345';
-if (process.env.NODE_ENV !== 'production' && JWT_SECRET === 'DEFAULT_DEVELOPMENT_SECRET_KEY_12345') {
+const isProduction = process.env.NODE_ENV === 'production';
+
+// JWT_SECRET is required in production
+if (isProduction && (!process.env.JWT_SECRET || JWT_SECRET === 'DEFAULT_DEVELOPMENT_SECRET_KEY_12345')) {
+    console.error('ERROR: JWT_SECRET environment variable is required in production!');
+    process.exit(1);
+}
+
+if (!isProduction && JWT_SECRET === 'DEFAULT_DEVELOPMENT_SECRET_KEY_12345') {
     console.warn('WARNING: Using default JWT secret key. Set JWT_SECRET environment variable in production!');
 }
+
 const JWT_EXPIRES_IN = '1y';
 
-// --- JWT Token Generation Function (Implemented) ---
+/**
+ * Generates a JWT token for a user
+ * @param userHash - The hashed user identifier (phone number hash)
+ * @returns JWT token string
+ */
 function generateJwtToken(userHash: string): string {
-    const payload = { userHash }; // Payload contains only userHash as requested
+    const payload = { userHash };
     const token = jwt.sign(
         payload,
         JWT_SECRET,
-        { expiresIn: JWT_EXPIRES_IN } // Set expiration time to 1 year
+        { expiresIn: JWT_EXPIRES_IN }
     );
     console.log(`[Auth] Generated token for ${userHash}`);
     return token;
 }
-// These helper functions can remain the same.
+
+/**
+ * JWT Authentication Middleware
+ * Validates JWT token from Authorization header and adds userHash to request
+ * @param req - Express request with AuthenticatedRequest interface
+ * @param res - Express response
+ * @param next - Express next function
+ */
+function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        res.status(401).json({ success: false, code: "AUTH_TOKEN_REQUIRED", message: "Authentication token required." });
+        return;
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) {
+            if (err.name === 'TokenExpiredError') {
+                res.status(401).json({ success: false, code: "TOKEN_EXPIRED", message: "Token has expired." });
+                return;
+            }
+            res.status(403).json({ success: false, code: "INVALID_TOKEN", message: "Invalid or malformed token." });
+            return;
+        }
+
+        // Token is valid, add userHash to request
+        const payload = decoded as { userHash: string };
+        req.userHash = payload.userHash;
+        next();
+    });
+}
+/**
+ * Sorts two strings alphabetically
+ * @param firstString - First string to sort
+ * @param secondString - Second string to sort
+ * @returns Array with both strings sorted alphabetically
+ */
 function sortAlphabetically(firstString: string, secondString: string): string[] {
 	const arrayToSort = [firstString, secondString];
 	arrayToSort.sort();
 	return arrayToSort;
 }
 
+/**
+ * Creates a deterministic hash for two users by sorting their hashes alphabetically
+ * This ensures the same hash is generated regardless of the order of users
+ * @param firstUser - First user hash
+ * @param secondUser - Second user hash
+ * @returns SHA-256 hash of the sorted concatenated user hashes
+ */
 export function hashTwoUsers(firstUser: string, secondUser: string): string {
 	const [alphabeticOne, alphabeticTwo] = sortAlphabetically(firstUser, secondUser);
 	const stringToHash = alphabeticOne + alphabeticTwo;
 	return sha256(stringToHash);
 }
 
-// Functions now need to be 'async' because database operations are asynchronous and return Promises.
+/**
+ * Sends feedback from one user to another
+ * Handles mutual feedback matching and rate limiting
+ * @param sendTo - Target user to receive feedback
+ * @param from - User sending the feedback
+ * @returns Promise resolving to FeedbackResponse with success status and message
+ */
 export async function sendFeedbackToSomeone(sendTo: User, from: User): Promise<FeedbackResponse> {
 	// Check if the user has the right to send feedback.
 	if (!(await doesUserHaveRightToSendAFeedback(from))) {
 		return {
 			success: false,
-			message: "sorry-,-you-must-wait"
+			message: "rate-limit-exceeded"
 		};
 	}
 
@@ -115,6 +192,11 @@ export async function sendFeedbackToSomeone(sendTo: User, from: User): Promise<F
 	}
 }
 
+/**
+ * Checks if a user has the right to send feedback (rate limiting: 7 days)
+ * @param from - User attempting to send feedback
+ * @returns Promise resolving to true if user can send feedback, false otherwise
+ */
 async function doesUserHaveRightToSendAFeedback(from: User): Promise<boolean> {
 	const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
 	const sevenDaysAgo = new Date(new Date().getTime() - sevenDaysInMs);
@@ -130,6 +212,12 @@ async function doesUserHaveRightToSendAFeedback(from: User): Promise<boolean> {
 	return query.empty;
 }
 
+/**
+ * Creates notifications for both users when mutual feedback is established
+ * Notifications have random expiry dates between 1-7 days
+ * @param userA_Hash - Hash of first user
+ * @param userB_Hash - Hash of second user
+ */
 async function createNotification(userA_Hash: string, userB_Hash: string): Promise<void> {
 	const now = new Date();
 	const oneDayInMs = 24 * 60 * 60 * 1000;
@@ -148,6 +236,11 @@ async function createNotification(userA_Hash: string, userB_Hash: string): Promi
     await batch.commit();
 }
 
+/**
+ * Cleans up all records related to a feedback hash after mutual feedback is established
+ * Uses batch operations for atomic deletion
+ * @param feedbackHash - The feedback hash to clean up records for
+ */
 async function cleanupRecords(feedbackHash: string): Promise<void> {
     // Use a batch to delete all related records atomically.
 	const batch = db.batch();
@@ -170,29 +263,54 @@ app.post("/register-request", async (req: Request, res: Response) => {
 
     // Check if phoneNumber exists and is not empty
     if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.trim() === '') {
-      return res.status(400).json({ success: false, message: "phoneNumber is required." });
+      return res.status(400).json({ success: false, code: "PHONE_NUMBER_REQUIRED", message: "phoneNumber is required." });
     }
 
     // Hash the phone number
     const phoneNumberHash = sha256(phoneNumber.trim());
 
+    // Check for existing verification request to implement rate limiting
+    const existingRequestRef = db.collection('verificationRequests').doc(phoneNumberHash);
+    const existingRequestDoc = await existingRequestRef.get();
+    
+    const now = new Date();
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+    if (existingRequestDoc.exists) {
+      const existingData = existingRequestDoc.data();
+      const requestTime = existingData?.requestTime?.toDate();
+      
+      // Rate limiting: Max 1 request per 1 minute per phone number
+      if (requestTime && requestTime > fiveMinutesAgo) {
+        const timeRemaining = Math.ceil((requestTime.getTime() + 5 * 60 * 1000 - now.getTime()) / 1000);
+        return res.status(429).json({ 
+          success: false,
+          code: "RATE_LIMIT_EXCEEDED",
+          message: "Please wait before requesting a new verification code.",
+          retryAfter: timeRemaining
+        });
+      }
+    }
+
     // Generate verification code
     const verificationCode = generateVerificationCode(6);
 
     // Calculate expiration time (5 minutes from now)
-    const now = new Date();
     const expiresAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes
 
     // Save code and expiration to Firestore using the hash as document ID
     // Note: Set up TTL policy on 'expiresAt' field for 'verificationRequests' collection in Firestore.
-    await db.collection('verificationRequests').doc(phoneNumberHash).set({
+    await existingRequestRef.set({
       code: verificationCode,
-      expiresAt: admin.firestore.Timestamp.fromDate(expiresAt) // Store as Firestore Timestamp
+      expiresAt: admin.firestore.Timestamp.fromDate(expiresAt), // Store as Firestore Timestamp
+      requestTime: admin.firestore.Timestamp.fromDate(now), // Track when request was made
+      attemptCount: 0 // Initialize attempt counter for rate limiting
     });
 
-    // -------- Trigger SMS Sending Area --------
-    console.log(`Sending SMS to ${phoneNumber} (hashed: ${phoneNumberHash}) with code: ${verificationCode}`);
-    // TODO: Add actual SMS sending code here
+    // -------- SMS Sending (Mock Implementation) --------
+    // TODO: Replace with actual SMS service integration (Twilio, AWS SNS, etc.)
+    console.log(`[SMS Mock] Sending SMS to ${phoneNumber} (hashed: ${phoneNumberHash}) with code: ${verificationCode}`);
+    // In production, replace with:
     // await sendSms(phoneNumber, `Your verification code is: ${verificationCode}`);
     // ------------------------------------------
 
@@ -205,7 +323,7 @@ app.post("/register-request", async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error("Error in /register-request:", error);
-    res.status(500).json({ success: false, message: "Internal server error." });
+    res.status(500).json({ success: false, code: "INTERNAL_SERVER_ERROR", message: "Internal server error." });
   }
 });
 
@@ -213,7 +331,7 @@ app.post("/register", async (req: Request, res: Response) => {
   try {
     const { phoneNumber, smsValidationCode } = req.body;
     if (!phoneNumber || !smsValidationCode || typeof phoneNumber !== 'string' || typeof smsValidationCode !== 'string') {
-         return res.status(400).json({ success: false, message: "phoneNumber and smsValidationCode are required." });
+         return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "phoneNumber and smsValidationCode are required." });
     }
 
     const phoneNumberHash = sha256(phoneNumber.trim());
@@ -221,26 +339,41 @@ app.post("/register", async (req: Request, res: Response) => {
     const verificationDoc = await verificationRef.get();
 
     if (!verificationDoc.exists) {
-        return res.status(401).json({ success: false, message: "Verification request not found or expired." });
+        return res.status(401).json({ success: false, code: "VERIFICATION_NOT_FOUND", message: "Verification request not found or expired." });
     }
 
     const data = verificationDoc.data();
     const expiresAt = data?.expiresAt.toDate();
     const storedCode = data?.code;
+    const attemptCount = data?.attemptCount || 0;
 
     if (!expiresAt || !storedCode) { // Extra check for data integrity
         await verificationRef.delete(); // Clean up invalid record
-        return res.status(500).json({ success: false, message: "Verification data corrupted." });
+        return res.status(500).json({ success: false, code: "DATA_CORRUPTED", message: "Verification data corrupted." });
     }
 
+    // Rate limiting: Max 5 attempts per verification code
+    if (attemptCount >= 5) {
+        await verificationRef.delete(); // Clean up after max attempts
+        return res.status(429).json({ 
+            success: false,
+            code: "MAX_ATTEMPTS_EXCEEDED",
+            message: "Too many failed attempts. Please request a new verification code." 
+        });
+    }
 
     if (expiresAt < new Date()) {
         await verificationRef.delete(); // Clean up expired record
-        return res.status(401).json({ success: false, message: "Verification code has expired." });
+        return res.status(401).json({ success: false, code: "VERIFICATION_EXPIRED", message: "Verification code has expired." });
     }
 
     if (storedCode !== smsValidationCode.trim()) {
-        return res.status(401).json({ success: false, message: "Invalid verification code." });
+        // Increment attempt counter on failed attempt
+        await verificationRef.update({ 
+            attemptCount: admin.firestore.FieldValue.increment(1),
+            lastAttempt: admin.firestore.Timestamp.fromDate(new Date())
+        });
+        return res.status(401).json({ success: false, code: "INVALID_VERIFICATION_CODE", message: "Invalid verification code." });
     }
 
     // --- Verification Successful ---
@@ -256,17 +389,154 @@ app.post("/register", async (req: Request, res: Response) => {
 
   } catch (error) {
      console.error("Error in /register:", error);
-     res.status(500).json({ success: false, message: "Internal server error." });
+     res.status(500).json({ success: false, code: "INTERNAL_SERVER_ERROR", message: "Internal server error." });
   }
 });
 
-app.post("/send-feedback", (req: Request, res: Response) => {
-  res.status(200).json({ message: "/send-feedback works" });
+app.post("/send-feedback", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { targetUserHash } = req.body;
+    const fromUserHash = req.userHash;
+
+    // Input validation
+    if (!targetUserHash || typeof targetUserHash !== 'string' || targetUserHash.trim() === '') {
+      return res.status(400).json({ success: false, code: "TARGET_USER_HASH_REQUIRED", message: "targetUserHash is required." });
+    }
+
+    // Validate targetUserHash format (should be SHA-256 hash: 64 hex characters)
+    if (!/^[a-f0-9]{64}$/i.test(targetUserHash.trim())) {
+      return res.status(400).json({ success: false, code: "INVALID_USER_HASH_FORMAT", message: "Invalid targetUserHash format." });
+    }
+
+    // Prevent self-feedback
+    if (fromUserHash === targetUserHash.trim()) {
+      return res.status(400).json({ success: false, code: "SELF_FEEDBACK_NOT_ALLOWED", message: "Cannot send feedback to yourself." });
+    }
+
+    // Create User objects
+    const fromUser: User = { userHash: fromUserHash! };
+    const targetUser: User = { userHash: targetUserHash.trim() };
+
+    // Call the feedback function
+    const result = await sendFeedbackToSomeone(targetUser, fromUser);
+
+    // Return appropriate status code based on result
+    const statusCode = result.success ? 200 : 400;
+    res.status(statusCode).json(result);
+
+  } catch (error) {
+    console.error("Error in /send-feedback:", error);
+    res.status(500).json({ success: false, code: "INTERNAL_SERVER_ERROR", message: "Internal server error." });
+  }
 });
 
-app.get("/get-notifications", (req: Request, res: Response) => {
-  res.status(200).json({ message: "/get-notifications works" });
+app.get("/get-notifications", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userHash = req.userHash;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    // Validate limit (max 100, min 1)
+    const validLimit = Math.min(Math.max(1, limit), 100);
+    const validOffset = Math.max(0, offset);
+
+    const now = admin.firestore.Timestamp.fromDate(new Date());
+
+    // Query notifications for the user that haven't expired
+    // Note: Using single orderBy to avoid composite index requirement
+    // Filter expired notifications in memory after fetching
+    const notificationsQuery = db.collection('notifications')
+      .where('to', '==', userHash)
+      .orderBy('notificationTime', 'desc') // Order by notification time descending
+      .limit(validLimit + validOffset + 50); // Fetch extra to account for expired ones
+
+    const snapshot = await notificationsQuery.get();
+
+    // Filter out expired notifications and apply offset
+    const allNotifications = snapshot.docs
+      .map(doc => {
+        const data = doc.data();
+        const sktTimestamp = data.skt;
+        const sktDate = sktTimestamp?.toDate ? sktTimestamp.toDate() : new Date(sktTimestamp);
+        
+        // Filter expired notifications
+        if (sktDate <= new Date()) {
+          return null;
+        }
+        
+        return {
+          id: doc.id,
+          to: data.to,
+          context: data.context,
+          notificationTime: data.notificationTime?.toDate ? data.notificationTime.toDate().toISOString() : data.notificationTime,
+          skt: sktDate.toISOString()
+        };
+      })
+      .filter((n): n is NonNullable<typeof n> => n !== null); // Remove nulls
+
+    // Apply offset and limit
+    const notifications = allNotifications.slice(validOffset, validOffset + validLimit);
+
+    // Get total count (for pagination info) - query all and filter
+    const totalQuery = await db.collection('notifications')
+      .where('to', '==', userHash)
+      .get();
+    
+    const total = totalQuery.docs.filter(doc => {
+      const data = doc.data();
+      const sktTimestamp = data.skt;
+      const sktDate = sktTimestamp?.toDate ? sktTimestamp.toDate() : new Date(sktTimestamp);
+      return sktDate > new Date();
+    }).length;
+
+    res.status(200).json({
+      success: true,
+      notifications: notifications,
+      total: total,
+      limit: validLimit,
+      offset: validOffset
+    });
+
+  } catch (error) {
+    console.error("Error in /get-notifications:", error);
+    res.status(500).json({ success: false, code: "INTERNAL_SERVER_ERROR", message: "Internal server error." });
+  }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`Server runs on:${PORT}`));
+// Health check endpoint for deployment platforms
+app.get("/health", (req: Request, res: Response) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Global error handler middleware
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ 
+    success: false, 
+    code: "INTERNAL_SERVER_ERROR",
+    message: process.env.NODE_ENV === 'production' 
+      ? "Internal server error." 
+      : err.message 
+  });
+});
+
+// Request logging middleware (development only)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      console.log(`${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+    });
+    next();
+  });
+}
+
+// Export app for testing
+export { app };
+
+const PORT = process.env.PORT || 3000;
+// Only start server if this file is run directly (not imported for tests)
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
