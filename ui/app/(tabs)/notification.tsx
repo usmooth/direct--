@@ -1,3 +1,4 @@
+import { SPECIFIC_backend_url } from "@/constants";
 import { useState } from "react";
 import {
   Text,
@@ -19,9 +20,7 @@ export default function Index() {
     setIsLoading(true);
     try {
       // TODO: Replace with your actual backend endpoint
-      const response = await fetch(
-        "https://your-backend.com/api/notifications"
-      );
+      const response = await fetch(`${SPECIFIC_backend_url}/get-notifications`);
       if (!response.ok) {
         throw new Error("Network response was not ok");
       }
@@ -46,9 +45,7 @@ export default function Index() {
         ]}
         disabled={isLoading}
       >
-        <Text style={styles.buttonText}>
-          {isLoading ? "Loading..." : "Refresh Notifications"}
-        </Text>
+        <Text style={styles.buttonText}>Refresh Notifications</Text>
       </Pressable>
 
       {isLoading && notifications.length === 0 && (
@@ -62,6 +59,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: "center",
+    justifyContent: "flex-end",
     padding: 20,
   },
   button: {
@@ -79,6 +77,7 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+    width: "100%",
   },
   loader: {
     marginTop: 50,

@@ -1,5 +1,6 @@
+import { SPECIFIC_backend_url } from "@/constants";
 import { Link, Stack } from "expo-router";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   StyleSheet,
   Text,
@@ -10,31 +11,88 @@ import {
   Dimensions,
 } from "react-native";
 import * as Progress from "react-native-progress";
+import * as Contacts from "expo-contacts";
+import * as Crypto from "expo-crypto";
+import parsePhoneNumberFromString, {
+  CountryCode,
+} from "libphonenumber-js/mobile";
+import * as Localization from "expo-localization";
 
 export default function Index() {
   const [person, setPerson] = useState("");
+  const [foundContact, setFoundContact] = useState<Contacts.Contact | null>(
+    null
+  );
   const [progress, setProgress] = useState(0);
   const intervalRef = useRef<number | null>(null);
 
+  const normalizePhoneNumber = (phone: string): string | null => {
+    const locales = Localization.getLocales();
+    const primaryLocale = locales[0];
+    const normalizedNumber = parsePhoneNumberFromString(
+      phone,
+      primaryLocale.regionCode as CountryCode
+    );
+
+    if (!normalizedNumber || !normalizedNumber.isValid()) {
+      // User'a numarayı düzeltmesini söyle
+      return null;
+    }
+    return normalizedNumber.number;
+  };
+
   const sendApprovalRequest = async () => {
-    // Prevent sending request if person is not set
     if (!person.trim()) {
       Alert.alert("Input required", "Please type something before approving.");
       return;
     }
 
+    if (!foundContact || !foundContact.phoneNumbers) {
+      Alert.alert(
+        "Contact not found",
+        "Please select a valid contact from your list."
+      );
+      return;
+    }
+
+    const phoneNumber = foundContact.phoneNumbers[0].number;
+    if (!phoneNumber) {
+      Alert.alert(
+        "No Phone Number",
+        "This contact does not have a phone number."
+      );
+      return;
+    }
+
+    const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
+
+    if (normalizedPhoneNumber === null) {
+      Alert.alert(
+        "Phone number is not valid",
+        "Please edit phone number with country code and try again."
+      );
+      return;
+    }
+
     try {
-      // TODO: Replace with your actual backend endpoint and request details
-      const response = await fetch("localhost:3000/send-feedback", {
+      const hashedPhoneNumber = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        normalizedPhoneNumber
+      );
+
+      const response = await fetch(`${SPECIFIC_backend_url}/send-feedback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ name: person }),
+        body: JSON.stringify({ feedbackTo: hashedPhoneNumber }),
       });
 
-      const responseData = await response.json();
-      Alert.alert("Success!", `Approved for: ${person}`);
+      if (response.ok) {
+        console.log("Feedback sent successfully");
+      } else {
+        console.error("Failed to send feedback:", response.statusText);
+      }
     } catch (error) {
       console.error("Failed to send approval request:", error);
       Alert.alert("Error", "Could not complete the approval request.");
@@ -46,10 +104,11 @@ export default function Index() {
       setProgress((prev) => {
         if (prev >= 1) {
           clearInterval(intervalRef.current!);
+          setProgress(0);
           sendApprovalRequest();
           return 1;
         }
-        return prev + 0.01; // 10ms * 500 steps = 5000ms = 5s
+        return prev + 0.1; // 10ms * 500 steps = 5000ms = 5s
       }); // This interval is not perfectly accurate, but fine for UI purposes
     }, 50); // Update every 50ms
   };
@@ -61,6 +120,35 @@ export default function Index() {
     setProgress(0);
   };
 
+  useEffect(() => {
+    (async () => {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Denied",
+          "We need access to your contacts to find people."
+        );
+      }
+    })();
+  }, []);
+
+  const handleSearch = async (name: string) => {
+    setPerson(name);
+    setFoundContact(null); // Reset previous search result
+
+    if (name.trim()) {
+      const { data } = await Contacts.getContactsAsync({
+        name,
+      });
+
+      // Find a contact with an exact, case-sensitive name match
+      const exactMatch = data.find((contact) => contact.name === name);
+      if (exactMatch) {
+        setFoundContact(exactMatch);
+      }
+    }
+  };
+
   return (
     <>
       <Stack.Screen
@@ -68,9 +156,17 @@ export default function Index() {
           title: "Home",
           headerShown: true,
           headerRight: () => (
-            <Link href="/register" style={{ padding: 10 }}>
-              <Text style={{ fontSize: 24 }}>🔔</Text>
-            </Link>
+            <>
+              <Link href="/kvkk" style={{ padding: 10 }}>
+                <Text style={{ fontSize: 24 }}>kvkk</Text>
+              </Link>
+              <Link href="/register" style={{ padding: 10 }}>
+                <Text style={{ fontSize: 24 }}>Register</Text>
+              </Link>
+              <Link href="/notification" style={{ padding: 10 }}>
+                <Text style={{ fontSize: 24 }}>🔔</Text>
+              </Link>
+            </>
           ),
         }}
       />
@@ -85,9 +181,12 @@ export default function Index() {
         <TextInput
           style={styles.input}
           placeholder="Type something here..."
-          onChangeText={setPerson}
+          onChangeText={handleSearch}
           value={person}
         />
+        {foundContact && (
+          <Text style={styles.contactInfo}>Found: {foundContact.name}</Text>
+        )}
         <Pressable
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
@@ -136,5 +235,10 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  contactInfo: {
+    marginTop: 8,
+    fontSize: 16,
+    color: "green",
   },
 });

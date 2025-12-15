@@ -1,3 +1,5 @@
+import { SPECIFIC_backend_url } from "@/constants";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
   StyleSheet,
@@ -17,13 +19,14 @@ export default function Index() {
 
   const handleSendSms = async () => {
     if (!phoneNumber.trim()) {
-      Alert.alert("Input required", "Please enter your phone number.");
+      console.error("No phone number provided");
       return;
     }
     setIsLoading(true);
     try {
-      // TODO: Replace with your endpoint to send an SMS
-      const response = await fetch("https://your-backend.com/api/send-sms", {
+      console.log(SPECIFIC_backend_url);
+
+      const response = await fetch(`${SPECIFIC_backend_url}/register-request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phoneNumber }),
@@ -34,10 +37,7 @@ export default function Index() {
       }
 
       setIsSmsSent(true);
-      Alert.alert(
-        "SMS Sent!",
-        "Please check your messages for a verification code."
-      );
+      console.log("Sms Sent");
     } catch (error: any) {
       console.error("SMS sending error:", error);
       Alert.alert("Error", error.message || "Could not send SMS.");
@@ -54,7 +54,7 @@ export default function Index() {
     setIsLoading(true);
     try {
       // TODO: Replace with your endpoint to verify the code
-      const response = await fetch("https://your-backend.com/api/verify-code", {
+      const response = await fetch(`${SPECIFIC_backend_url}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phoneNumber, code: smsCode }),
@@ -64,7 +64,13 @@ export default function Index() {
         throw new Error("Invalid code. Please try again.");
       }
 
-      Alert.alert("Success!", "Your phone number has been verified.");
+      if (response.status === 200) {
+        Alert.alert("Success!", "Your phone number has been verified.");
+        router.push("/");
+        setPhoneNumber("");
+        setSmsCode("");
+        setIsSmsSent(false);
+      }
     } catch (error: any) {
       console.error("Code verification error:", error);
       Alert.alert("Error", error.message || "Could not verify code.");
@@ -75,14 +81,14 @@ export default function Index() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Register Your Phone</Text>
+      <Text style={styles.title}>Verify Your Phone</Text>
       <TextInput
         style={styles.input}
         placeholder="Enter your phone number"
         onChangeText={setPhoneNumber}
         value={phoneNumber}
         keyboardType="phone-pad"
-        editable={!isSmsSent} // Disable editing after SMS is sent
+        readOnly={isSmsSent}
       />
 
       {isSmsSent && (
