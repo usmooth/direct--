@@ -12,34 +12,17 @@ import {
 } from "react-native";
 import * as Progress from "react-native-progress";
 import * as Contacts from "expo-contacts";
+import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
-import parsePhoneNumberFromString, {
-  CountryCode,
-} from "libphonenumber-js/mobile";
-import * as Localization from "expo-localization";
+import { normalizePhoneNumber } from "@/utils/normalizer";
 
 export default function Index() {
   const [person, setPerson] = useState("");
   const [foundContact, setFoundContact] = useState<Contacts.Contact | null>(
-    null
+    null,
   );
   const [progress, setProgress] = useState(0);
   const intervalRef = useRef<number | null>(null);
-
-  const normalizePhoneNumber = (phone: string): string | null => {
-    const locales = Localization.getLocales();
-    const primaryLocale = locales[0];
-    const normalizedNumber = parsePhoneNumberFromString(
-      phone,
-      primaryLocale.regionCode as CountryCode
-    );
-
-    if (!normalizedNumber || !normalizedNumber.isValid()) {
-      // User'a numarayı düzeltmesini söyle
-      return null;
-    }
-    return normalizedNumber.number;
-  };
 
   const sendApprovalRequest = async () => {
     if (!person.trim()) {
@@ -50,16 +33,18 @@ export default function Index() {
     if (!foundContact || !foundContact.phoneNumbers) {
       Alert.alert(
         "Contact not found",
-        "Please select a valid contact from your list."
+        "Please select a valid contact from your list.",
       );
       return;
     }
 
+    console.log(foundContact.phoneNumbers[0]);
     const phoneNumber = foundContact.phoneNumbers[0].number;
+
     if (!phoneNumber) {
       Alert.alert(
         "No Phone Number",
-        "This contact does not have a phone number."
+        "This contact does not have a phone number.",
       );
       return;
     }
@@ -69,7 +54,7 @@ export default function Index() {
     if (normalizedPhoneNumber === null) {
       Alert.alert(
         "Phone number is not valid",
-        "Please edit phone number with country code and try again."
+        "Please edit phone number with country code and try again.",
       );
       return;
     }
@@ -77,21 +62,39 @@ export default function Index() {
     try {
       const hashedPhoneNumber = await Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,
-        normalizedPhoneNumber
+        normalizedPhoneNumber,
       );
+
+      const token = await SecureStore.getItemAsync("user_jwt_token");
+
+      if (!token) {
+        Alert.alert("Authentication Required", "Please register/login first.");
+        // Opsiyonel: Giriş sayfasına yönlendir
+        return;
+      }
 
       const response = await fetch(`${SPECIFIC_backend_url}/send-feedback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`, // JWT BURADA EKLENİYOR
         },
-        body: JSON.stringify({ feedbackTo: hashedPhoneNumber }),
+        body: JSON.stringify({ targetUserHash: hashedPhoneNumber }),
       });
+
+      if (response.status === 401 || response.status === 403) {
+        Alert.alert("Session Expired", "Please login again.");
+        // Token geçersizse temizle
+        await SecureStore.deleteItemAsync("user_jwt_token");
+        return;
+      }
 
       if (response.ok) {
         console.log("Feedback sent successfully");
       } else {
-        console.error("Failed to send feedback:", response.statusText);
+        const errorData = await response.json();
+        console.error("Failed:", errorData.message);
+        Alert.alert("Error", errorData.message || "Something went wrong.");
       }
     } catch (error) {
       console.error("Failed to send approval request:", error);
@@ -126,7 +129,7 @@ export default function Index() {
       if (status !== "granted") {
         Alert.alert(
           "Permission Denied",
-          "We need access to your contacts to find people."
+          "We need access to your contacts to find people.",
         );
       }
     })();

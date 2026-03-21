@@ -10,6 +10,8 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import * as SecureStore from "expo-secure-store";
+import { normalizePhoneNumber } from "@/utils/normalizer";
 
 export default function Index() {
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -22,6 +24,15 @@ export default function Index() {
       console.error("No phone number provided");
       return;
     }
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
+    if (!normalizedPhone) {
+      Alert.alert(
+        "Phone number is not valid",
+        "Please edit phone number with country code and try again.",
+      );
+      return;
+    }
+
     setIsLoading(true);
     try {
       console.log(SPECIFIC_backend_url);
@@ -29,7 +40,7 @@ export default function Index() {
       const response = await fetch(`${SPECIFIC_backend_url}/register-request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber }),
+        body: JSON.stringify({ phoneNumber: normalizedPhone }),
       });
 
       if (!response.ok) {
@@ -57,7 +68,7 @@ export default function Index() {
       const response = await fetch(`${SPECIFIC_backend_url}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber, code: smsCode }),
+        body: JSON.stringify({ phoneNumber, smsValidationCode: smsCode }),
       });
 
       if (!response.ok) {
@@ -66,6 +77,10 @@ export default function Index() {
 
       if (response.status === 200) {
         Alert.alert("Success!", "Your phone number has been verified.");
+        const data = await response.json();
+        if (data.token) {
+          await SecureStore.setItemAsync("user_jwt_token", data.token);
+        }
         router.push("/");
         setPhoneNumber("");
         setSmsCode("");
