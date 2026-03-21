@@ -41,3 +41,5 @@ app-example
 # databank
 
 serviceAccountKey.json
+
+backend/**/*.js
