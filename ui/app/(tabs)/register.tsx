@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { normalizePhoneNumber } from "@/utils/normalizer";
+import { validatePhoneNumber } from "@/utils/phone-number-validator";
 
 export default function Index() {
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -24,11 +24,11 @@ export default function Index() {
       console.error("No phone number provided");
       return;
     }
-    const normalizedPhone = normalizePhoneNumber(phoneNumber);
-    if (!normalizedPhone) {
+    const validatedPhoneNumber = validatePhoneNumber(phoneNumber);
+    if (!validatedPhoneNumber) {
       Alert.alert(
         "Phone number is not valid",
-        "Please edit phone number with country code and try again.",
+        "Please edit phone number with country code and try again. (+1XXX)",
       );
       return;
     }
@@ -40,7 +40,7 @@ export default function Index() {
       const response = await fetch(`${SPECIFIC_backend_url}/register-request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: normalizedPhone }),
+        body: JSON.stringify({ phoneNumber: validatedPhoneNumber }),
       });
 
       if (!response.ok) {

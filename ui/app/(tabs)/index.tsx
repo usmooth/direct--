@@ -14,7 +14,7 @@ import * as Progress from "react-native-progress";
 import * as Contacts from "expo-contacts";
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
-import { normalizePhoneNumber } from "@/utils/normalizer";
+import { validatePhoneNumber } from "@/utils/phone-number-validator";
 
 export default function Index() {
   const [person, setPerson] = useState("");
@@ -39,7 +39,10 @@ export default function Index() {
     }
 
     console.log(foundContact.phoneNumbers[0]);
-    const phoneNumber = foundContact.phoneNumbers[0].number;
+    const contactNumbers = foundContact.phoneNumbers;
+    const bestNumber =
+      contactNumbers.find((p) => p.label === "mobile") || contactNumbers[0];
+    const phoneNumber = bestNumber.number;
 
     if (!phoneNumber) {
       Alert.alert(
@@ -49,7 +52,7 @@ export default function Index() {
       return;
     }
 
-    const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
+    const normalizedPhoneNumber = validatePhoneNumber(phoneNumber);
 
     if (normalizedPhoneNumber === null) {
       Alert.alert(
