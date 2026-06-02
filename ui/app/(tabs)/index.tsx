@@ -8,9 +8,7 @@ import {
   TextInput,
   Alert,
   Pressable,
-  Dimensions,
 } from "react-native";
-import * as Progress from "react-native-progress";
 import * as Contacts from "expo-contacts";
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
@@ -18,11 +16,44 @@ import { validatePhoneNumber } from "@/utils/phone-number-validator";
 
 export default function Index() {
   const [person, setPerson] = useState("");
-  const [foundContact, setFoundContact] = useState<Contacts.Contact | null>(
-    null,
-  );
+  const [foundContact, setFoundContact] = useState<Contacts.Contact | null>(null);
   const [progress, setProgress] = useState(0);
-  const intervalRef = useRef<number | null>(null);
+  const [buttonColor, setButtonColor] = useState("transparent");
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Contacts.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Denied",
+          "We need access to your contacts to find people."
+        );
+      }
+    })();
+  }, []);
+
+  // Generates random matte colors for the button fill
+  const getRandomMatteColor = () => {
+    const hue = Math.floor(Math.random() * 360);
+    return `hsl(${hue}, 60%, 65%)`;
+  };
+
+  const handleSearch = async (name: string) => {
+    setPerson(name);
+    setFoundContact(null);
+
+    if (name.trim()) {
+      const { data } = await Contacts.getContactsAsync({
+        name,
+      });
+
+      const exactMatch = data.find((contact) => contact.name === name);
+      if (exactMatch) {
+        setFoundContact(exactMatch);
+      }
+    }
+  };
 
   const sendApprovalRequest = async () => {
     if (!person.trim()) {
@@ -33,12 +64,11 @@ export default function Index() {
     if (!foundContact || !foundContact.phoneNumbers) {
       Alert.alert(
         "Contact not found",
-        "Please select a valid contact from your list.",
+        "Please select a valid contact from your list."
       );
       return;
     }
 
-    console.log(foundContact.phoneNumbers[0]);
     const contactNumbers = foundContact.phoneNumbers;
     const bestNumber =
       contactNumbers.find((p) => p.label === "mobile") || contactNumbers[0];
@@ -47,7 +77,7 @@ export default function Index() {
     if (!phoneNumber) {
       Alert.alert(
         "No Phone Number",
-        "This contact does not have a phone number.",
+        "This contact does not have a phone number."
       );
       return;
     }
@@ -57,7 +87,7 @@ export default function Index() {
     if (normalizedPhoneNumber === null) {
       Alert.alert(
         "Phone number is not valid",
-        "Please edit phone number with country code and try again.",
+        "Please edit phone number with country code and try again."
       );
       return;
     }
@@ -65,14 +95,13 @@ export default function Index() {
     try {
       const hashedPhoneNumber = await Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,
-        normalizedPhoneNumber,
+        normalizedPhoneNumber
       );
 
       const token = await SecureStore.getItemAsync("user_jwt_token");
 
       if (!token) {
         Alert.alert("Authentication Required", "Please register/login first.");
-        // Opsiyonel: Giriş sayfasına yönlendir
         return;
       }
 
@@ -80,14 +109,13 @@ export default function Index() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`, // JWT BURADA EKLENİYOR
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ targetUserHash: hashedPhoneNumber }),
       });
 
       if (response.status === 401 || response.status === 403) {
         Alert.alert("Session Expired", "Please login again.");
-        // Token geçersizse temizle
         await SecureStore.deleteItemAsync("user_jwt_token");
         return;
       }
@@ -109,14 +137,16 @@ export default function Index() {
     intervalRef.current = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 1) {
-          clearInterval(intervalRef.current!);
+          if (intervalRef.current) clearInterval(intervalRef.current);
           setProgress(0);
+          setButtonColor("transparent");
           sendApprovalRequest();
           return 1;
         }
-        return prev + 0.1; // 10ms * 500 steps = 5000ms = 5s
-      }); // This interval is not perfectly accurate, but fine for UI purposes
-    }, 50); // Update every 50ms
+        setButtonColor(getRandomMatteColor());
+        return prev + 0.01; // 100 steps * 50ms = 5000ms (5 seconds)
+      });
+    }, 50);
   };
 
   const handlePressOut = () => {
@@ -124,35 +154,7 @@ export default function Index() {
       clearInterval(intervalRef.current);
     }
     setProgress(0);
-  };
-
-  useEffect(() => {
-    (async () => {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission Denied",
-          "We need access to your contacts to find people.",
-        );
-      }
-    })();
-  }, []);
-
-  const handleSearch = async (name: string) => {
-    setPerson(name);
-    setFoundContact(null); // Reset previous search result
-
-    if (name.trim()) {
-      const { data } = await Contacts.getContactsAsync({
-        name,
-      });
-
-      // Find a contact with an exact, case-sensitive name match
-      const exactMatch = data.find((contact) => contact.name === name);
-      if (exactMatch) {
-        setFoundContact(exactMatch);
-      }
-    }
+    setButtonColor("transparent");
   };
 
   return (
@@ -177,31 +179,35 @@ export default function Index() {
         }}
       />
       <View style={styles.container}>
-        <Progress.Bar
-          progress={progress}
-          width={Dimensions.get("window").width * 0.8}
-          height={10}
-          color={"#007bff"}
-          style={styles.progressBar}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Type something here..."
-          onChangeText={handleSearch}
-          value={person}
-        />
-        {foundContact && (
-          <Text style={styles.contactInfo}>Found: {foundContact.name}</Text>
-        )}
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>type-contact-name</Text>
+          <TextInput
+            style={styles.input}
+            onChangeText={handleSearch}
+            value={person}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {foundContact && (
+            <Text style={styles.contactInfo}>Found: {foundContact.name}</Text>
+          )}
+        </View>
+
         <Pressable
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
-          style={({ pressed }) => [
-            styles.button,
-            { backgroundColor: pressed ? "#0056b3" : "#007bff" },
-          ]}
+          style={styles.buttonContainer}
         >
-          <Text style={styles.buttonText}>Hold to Approve</Text>
+          <View
+            style={[
+              styles.fillingLayer,
+              {
+                width: `${progress * 100}%`,
+                backgroundColor: buttonColor,
+              },
+            ]}
+          />
+          <Text style={styles.buttonText}>send</Text>
         </Pressable>
       </View>
     </>
@@ -211,40 +217,64 @@ export default function Index() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#ffffff",
+    justifyContent: "center",
     alignItems: "center",
-    justifyContent: "flex-start",
-    paddingTop: "25%",
+    padding: 32,
+    
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
+  inputContainer: {
+    width: "100%",
+    marginBottom: 48,
+    
+  },
+  label: {
+    fontSize: 14,
+    color: "#000000",
+    fontWeight: "600",
+    marginBottom: 12,
+    textTransform: "lowercase",
+    textAlign: "center",
   },
   input: {
-    width: "80%",
-    height: 40,
-    borderColor: "gray",
-    borderWidth: 1,
-    paddingHorizontal: 10,
+    width: "100%",
+    height: 50,
+    borderWidth: 1.5,
+    borderColor: "#000000",
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: "#000000",
+    backgroundColor: "#ffffff",
+    borderRadius : 10,
   },
-  progressBar: {
-    marginBottom: 20,
+  buttonContainer: {
+    width: "100%",
+    height: 54,
+    borderWidth: 1.5,
+    borderColor: "#000000",
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+    overflow: "hidden",
+    backgroundColor: "transparent",
+    borderRadius : 10,
   },
-  button: {
-    marginTop: 16,
-    backgroundColor: "#007bff",
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 8,
-    elevation: 3,
+  fillingLayer: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
   },
   buttonText: {
-    color: "white",
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "700",
+    color: "#000000",
+    zIndex: 1,
+    textTransform: "lowercase",
   },
   contactInfo: {
     marginTop: 8,
-    fontSize: 16,
-    color: "green",
+    fontSize: 14,
+    color: "#666666",
   },
 });

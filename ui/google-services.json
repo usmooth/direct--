@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "833972566315",
+    "project_id": "direct--backend",
+    "storage_bucket": "direct--backend.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:833972566315:android:72de0ca77b36f7fee02d6e",
+        "android_client_info": {
+          "package_name": "com.direct.direct"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAD7EUfmggAthehxxWVdLOBK4GkmHURlyI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

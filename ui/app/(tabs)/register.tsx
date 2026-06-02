@@ -1,6 +1,6 @@
 import { SPECIFIC_backend_url } from "@/constants";
 import { router } from "expo-router";
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -12,15 +12,12 @@ import {
 } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { validatePhoneNumber } from "@/utils/phone-number-validator";
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
-import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
-import { app, auth } from '../../firebaseConfig';
+import auth from '@react-native-firebase/auth';
 
 export default function Index() {
-  const recaptchaVerifier = useRef(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [code, setCode] = useState("");
-  const [verificationId, setVerificationId] = useState("");
+  const [confirmResult, setConfirmResult] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const sendSMS = async () => {
@@ -39,13 +36,10 @@ export default function Index() {
 
     setIsLoading(true);
     try {
-      const phoneProvider = new PhoneAuthProvider(auth);
-      const id = await phoneProvider.verifyPhoneNumber(
-        phoneNumber, // Örn: +905551234567
-        recaptchaVerifier.current ?? undefined
-      );
-      setVerificationId(id);
-      Alert.alert('Succsss', 'SMS Gönderildi!');
+      // Native Firebase telefon doğrulamasını başlatır
+      const confirmation = await auth().signInWithPhoneNumber(validatedPhoneNumber);
+      setConfirmResult(confirmation);
+      Alert.alert('Success', 'SMS Gönderildi!');
     } catch (error: any) {
       console.error("SMS sending error:", error);
       Alert.alert("Error", error.message || "Could not send SMS.");
@@ -61,12 +55,15 @@ export default function Index() {
     }
     setIsLoading(true);
     try {
-      const credential = PhoneAuthProvider.credential(verificationId, code);
-      await signInWithCredential(auth, credential);
-      const user = auth.currentUser;
+      if (!confirmResult) return;
+
+      // Gelen SMS kodunu doğrula
+      await confirmResult.confirm(code);
+      
+      const user = auth().currentUser;
       const firebaseIdToken = await user?.getIdToken();
 
-      // TODO: BACKENDDEN JWT TOKEN AL
+      // BACKENDDEN JWT TOKEN AL
       const response = await fetch(`${SPECIFIC_backend_url}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,7 +84,8 @@ export default function Index() {
       router.push("/");
       setPhoneNumber("");
       setCode("");
-      Alert.alert('Succss', 'Registerec!');
+      setConfirmResult(null);
+      Alert.alert('Success', 'Registered!');
     } catch (error: any) {
       console.error("Code verification error:", error);
       Alert.alert("Error", error.message || "Could not verify code.");
@@ -98,12 +96,6 @@ export default function Index() {
 
   return (
     <View style={styles.container}>
-      
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={app.options}
-      />
-
       <Text style={styles.title}>Verify Your Phone</Text>
       <TextInput
         style={styles.input}
@@ -111,10 +103,10 @@ export default function Index() {
         onChangeText={setPhoneNumber}
         value={phoneNumber}
         keyboardType="phone-pad"
-        readOnly={Boolean(verificationId)}
+        readOnly={Boolean(confirmResult)}
       />
 
-      {verificationId && (
+      {confirmResult && (
         <TextInput
           style={styles.input}
           placeholder="Enter SMS code"
@@ -125,7 +117,7 @@ export default function Index() {
       )}
 
       <Pressable
-        onPress={verificationId ? verifyCode : sendSMS}
+        onPress={confirmResult ? verifyCode : sendSMS}
         style={({ pressed }) => [
           styles.button,
           { backgroundColor: pressed ? "#0056b3" : "#007bff" },
@@ -137,7 +129,7 @@ export default function Index() {
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={styles.buttonText}>
-            {verificationId ? "Verify Code" : "Send SMS"}
+            {confirmResult ? "Verify Code" : "Send SMS"}
           </Text>
         )}
       </Pressable>
