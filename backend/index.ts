@@ -329,55 +329,56 @@ app.post("/register-request", async (req: Request, res: Response) => {
 
 app.post("/register", async (req: Request, res: Response) => {
   try {
-    const { phoneNumber, smsValidationCode } = req.body;
-    if (!phoneNumber || !smsValidationCode || typeof phoneNumber !== 'string' || typeof smsValidationCode !== 'string') {
-         return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "phoneNumber and smsValidationCode are required." });
+    const { phoneNumber, firebaseId } = req.body;
+    if (!phoneNumber || !firebaseId || typeof phoneNumber !== 'string' || typeof firebaseId !== 'string') {
+         return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "phoneNumber and firebaseId are required." });
     }
+
+    await admin.auth().verifyIdToken(firebaseId);
 
     const phoneNumberHash = sha256(phoneNumber.trim());
-    const verificationRef = db.collection('verificationRequests').doc(phoneNumberHash);
-    const verificationDoc = await verificationRef.get();
+    // const verificationRef = db.collection('verificationRequests').doc(phoneNumberHash);
+    // const verificationDoc = await verificationRef.get();
 
-    if (!verificationDoc.exists) {
-        return res.status(401).json({ success: false, code: "VERIFICATION_NOT_FOUND", message: "Verification request not found or expired." });
-    }
+    // if (!verificationDoc.exists) {
+    //     return res.status(401).json({ success: false, code: "VERIFICATION_NOT_FOUND", message: "Verification request not found or expired." });
+    // }
 
-    const data = verificationDoc.data();
-    const expiresAt = data?.expiresAt.toDate();
-    const storedCode = data?.code;
-    const attemptCount = data?.attemptCount || 0;
+    // const data = verificationDoc.data();
+    // const expiresAt = data?.expiresAt.toDate();
+    // const attemptCount = data?.attemptCount || 0;
 
-    if (!expiresAt || !storedCode) { // Extra check for data integrity
-        await verificationRef.delete(); // Clean up invalid record
-        return res.status(500).json({ success: false, code: "DATA_CORRUPTED", message: "Verification data corrupted." });
-    }
+    // if (!expiresAt) { // Extra check for data integrity
+    //     await verificationRef.delete(); // Clean up invalid record
+    //     return res.status(500).json({ success: false, code: "DATA_CORRUPTED", message: "Verification data corrupted." });
+    // }
 
-    // Rate limiting: Max 5 attempts per verification code
-    if (attemptCount >= 5) {
-        await verificationRef.delete(); // Clean up after max attempts
-        return res.status(429).json({ 
-            success: false,
-            code: "MAX_ATTEMPTS_EXCEEDED",
-            message: "Too many failed attempts. Please request a new verification code." 
-        });
-    }
+    // // Rate limiting: Max 5 attempts per verification code
+    // if (attemptCount >= 5) {
+    //     await verificationRef.delete(); // Clean up after max attempts
+    //     return res.status(429).json({ 
+    //         success: false,
+    //         code: "MAX_ATTEMPTS_EXCEEDED",
+    //         message: "Too many failed attempts. Please request a new verification code." 
+    //     });
+    // }
 
-    if (expiresAt < new Date()) {
-        await verificationRef.delete(); // Clean up expired record
-        return res.status(401).json({ success: false, code: "VERIFICATION_EXPIRED", message: "Verification code has expired." });
-    }
+    // if (expiresAt < new Date()) {
+    //     await verificationRef.delete(); // Clean up expired record
+    //     return res.status(401).json({ success: false, code: "VERIFICATION_EXPIRED", message: "Verification code has expired." });
+    // }
 
-    if (storedCode !== smsValidationCode.trim()) {
-        // Increment attempt counter on failed attempt
-        await verificationRef.update({ 
-            attemptCount: admin.firestore.FieldValue.increment(1),
-            lastAttempt: admin.firestore.Timestamp.fromDate(new Date())
-        });
-        return res.status(401).json({ success: false, code: "INVALID_VERIFICATION_CODE", message: "Invalid verification code." });
-    }
+    // if (storedCode !== firebaseId.trim()) {
+    //     // Increment attempt counter on failed attempt
+    //     await verificationRef.update({ 
+    //         attemptCount: admin.firestore.FieldValue.increment(1),
+    //         lastAttempt: admin.firestore.Timestamp.fromDate(new Date())
+    //     });
+    //     return res.status(401).json({ success: false, code: "INVALID_VERIFICATION_CODE", message: "Invalid verification code." });
+    // }
 
-    // --- Verification Successful ---
-    await verificationRef.delete(); // Delete the used verification code
+    // // --- Verification Successful ---
+    // await verificationRef.delete(); // Delete the used verification code
 
     const userHash = phoneNumberHash; // Use the phone hash as user identifier
 

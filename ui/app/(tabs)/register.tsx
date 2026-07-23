@@ -1,6 +1,6 @@
 import { SPECIFIC_backend_url } from "@/constants";
 import { router } from "expo-router";
-import { useState } from "react";
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,44 +11,35 @@ import {
   ActivityIndicator,
 } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { normalizePhoneNumber } from "@/utils/normalizer";
+import { validatePhoneNumber } from "@/utils/phone-number-validator";
+import auth from '@react-native-firebase/auth';
 
 export default function Index() {
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [smsCode, setSmsCode] = useState("");
-  const [isSmsSent, setIsSmsSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [confirmResult, setConfirmResult] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSendSms = async () => {
+  const sendSMS = async () => {
     if (!phoneNumber.trim()) {
       console.error("No phone number provided");
       return;
     }
-    const normalizedPhone = normalizePhoneNumber(phoneNumber);
-    if (!normalizedPhone) {
+    const validatedPhoneNumber = validatePhoneNumber(phoneNumber);
+    if (!validatedPhoneNumber) {
       Alert.alert(
         "Phone number is not valid",
-        "Please edit phone number with country code and try again.",
+        "Please edit phone number with country code and try again. (+1XXX)",
       );
       return;
     }
 
     setIsLoading(true);
     try {
-      console.log(SPECIFIC_backend_url);
-
-      const response = await fetch(`${SPECIFIC_backend_url}/register-request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: normalizedPhone }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to send SMS. Please try again.");
-      }
-
-      setIsSmsSent(true);
-      console.log("Sms Sent");
+      // Native Firebase telefon doğrulamasını başlatır
+      const confirmation = await auth().signInWithPhoneNumber(validatedPhoneNumber);
+      setConfirmResult(confirmation);
+      Alert.alert('Success', 'SMS Gönderildi!');
     } catch (error: any) {
       console.error("SMS sending error:", error);
       Alert.alert("Error", error.message || "Could not send SMS.");
@@ -57,18 +48,26 @@ export default function Index() {
     }
   };
 
-  const handleVerifyCode = async () => {
-    if (!smsCode.trim()) {
+  const verifyCode = async () => {
+    if (!code.trim()) {
       Alert.alert("Input required", "Please enter the SMS code.");
       return;
     }
     setIsLoading(true);
     try {
-      // TODO: Replace with your endpoint to verify the code
+      if (!confirmResult) return;
+
+      // Gelen SMS kodunu doğrula
+      await confirmResult.confirm(code);
+      
+      const user = auth().currentUser;
+      const firebaseIdToken = await user?.getIdToken();
+
+      // BACKENDDEN JWT TOKEN AL
       const response = await fetch(`${SPECIFIC_backend_url}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber, smsValidationCode: smsCode }),
+        body: JSON.stringify({ phoneNumber, firebaseId: firebaseIdToken }),
       });
 
       if (!response.ok) {
@@ -81,11 +80,12 @@ export default function Index() {
         if (data.token) {
           await SecureStore.setItemAsync("user_jwt_token", data.token);
         }
-        router.push("/");
-        setPhoneNumber("");
-        setSmsCode("");
-        setIsSmsSent(false);
       }
+      router.push("/");
+      setPhoneNumber("");
+      setCode("");
+      setConfirmResult(null);
+      Alert.alert('Success', 'Registered!');
     } catch (error: any) {
       console.error("Code verification error:", error);
       Alert.alert("Error", error.message || "Could not verify code.");
@@ -99,25 +99,25 @@ export default function Index() {
       <Text style={styles.title}>Verify Your Phone</Text>
       <TextInput
         style={styles.input}
-        placeholder="Enter your phone number"
+        placeholder="Your phone number (+XXX)"
         onChangeText={setPhoneNumber}
         value={phoneNumber}
         keyboardType="phone-pad"
-        readOnly={isSmsSent}
+        readOnly={Boolean(confirmResult)}
       />
 
-      {isSmsSent && (
+      {confirmResult && (
         <TextInput
           style={styles.input}
           placeholder="Enter SMS code"
-          onChangeText={setSmsCode}
-          value={smsCode}
+          onChangeText={setCode}
+          value={code}
           keyboardType="number-pad"
         />
       )}
 
       <Pressable
-        onPress={isSmsSent ? handleVerifyCode : handleSendSms}
+        onPress={confirmResult ? verifyCode : sendSMS}
         style={({ pressed }) => [
           styles.button,
           { backgroundColor: pressed ? "#0056b3" : "#007bff" },
@@ -129,7 +129,7 @@ export default function Index() {
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={styles.buttonText}>
-            {isSmsSent ? "Verify Code" : "Send SMS"}
+            {confirmResult ? "Verify Code" : "Send SMS"}
           </Text>
         )}
       </Pressable>
